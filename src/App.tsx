@@ -1,5 +1,6 @@
 import { PhonePit } from "./components/PhonePit";
 import { VolumeSlider } from "./components/VolumeSlider";
+import { ScatteringPassword } from "./components/ScatteringPassword";
 
 export default function App() {
   return (
@@ -9,6 +10,7 @@ export default function App() {
       </h1>
       <PhonePit />
       <VolumeSlider />
+      <ScatteringPassword />
     </div>
   );
 }
