@@ -199,11 +199,8 @@ export default function App() {
               {currentLevel === 5 && <WaymoParking onSuccess={handleStageSuccess} />}
               {currentLevel === 6 && <CompleteFace onSuccess={handleStageSuccess} />}
               {currentLevel === 7 && <DoomCaptcha onSuccess={handleStageSuccess} />}
-              {currentLevel === 8 && (
-                <div className="text-center p-8 text-gray-400 font-mono text-xs">
-                  [ Level 8: Ocean Sanctuary Component coming next ]
-                </div>
-              )}
+              {currentLevel === 8 && (<OceanSanctuary onSuccess={handleStageSuccess} />)}
+              
               {currentLevel === 9 && (
                 <div className="text-center p-8 text-gray-400 font-mono text-xs">
                   [ Level 9: Feed the Baby Component coming next ]
