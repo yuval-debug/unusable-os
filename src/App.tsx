@@ -9,6 +9,7 @@ import { DoomCaptcha } from "./components/DoomCaptcha";
 import { ChaosTaskbar } from "./components/ChaosTaskbar";
 import { Monitor, CheckCircle2, Award, RotateCcw, ArrowRight, Lock } from "lucide-react";
 import { sfx } from "./utils/soundEffects";
+import { OceanSanctuary } from "./components/OceanSanctuary";
 
 interface Stage {
   id: number;
