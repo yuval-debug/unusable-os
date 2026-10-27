@@ -1,50 +1,77 @@
 import React, { useEffect, useRef, useState } from "react";
-import { RefreshCw, Target, Shield, Zap } from "lucide-react";
+import { RefreshCw, Skull, ShieldAlert } from "lucide-react";
 import { sfx } from "../utils/soundEffects";
-
-interface Demon {
-  id: number;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  alive: boolean;
-  emoji: string;
-}
 
 export interface DoomCaptchaProps {
   onSuccess?: () => void;
 }
 
+interface ApproachingMonster {
+  id: number;
+  x: number;
+  z: number;
+  speed: number;
+  hp: number;
+  maxHp: number;
+  type: "imp" | "caco" | "demon";
+}
+
 export const DoomCaptcha: React.FC<DoomCaptchaProps> = ({ onSuccess }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const demonsRef = useRef<Demon[]>([]);
-  const muzzleFlashRef = useRef<{ x: number; y: number; opacity: number } | null>(null);
-  
   const [kills, setKills] = useState<number>(0);
+  const [isGameOver, setIsGameOver] = useState<boolean>(false);
   const [isVictory, setIsVictory] = useState<boolean>(false);
+  const [health, setHealth] = useState<number>(100);
+  const [ammo, setAmmo] = useState<number>(20);
 
-  const demonEmojis = ["👹", "👿", "👾", "👺", "💀"];
+  const monstersRef = useRef<ApproachingMonster[]>([]);
+  const killsRef = useRef<number>(0);
+  const healthRef = useRef<number>(100);
+  const ammoRef = useRef<number>(20);
+  const muzzleFlashRef = useRef<boolean>(false);
 
-  const initDemons = () => {
-    const initialDemons: Demon[] = Array.from({ length: 3 }, (_, i) => ({
-      id: i,
-      x: 40 + Math.random() * 220,
-      y: 40 + Math.random() * 120,
-      vx: (Math.random() - 0.5) * 3,
-      vy: (Math.random() - 0.5) * 3,
-      size: 24,
-      alive: true,
-      emoji: demonEmojis[i % demonEmojis.length],
-    }));
-    demonsRef.current = initialDemons;
+  const playerXRef = useRef<number>(0);
+  const playerZRef = useRef<number>(0);
+  const walkCycleRef = useRef<number>(0);
+  const keysPressedRef = useRef<{ [key: string]: boolean }>({});
+
+  const initGame = () => {
+    killsRef.current = 0;
+    healthRef.current = 100;
+    ammoRef.current = 20;
+    playerXRef.current = 0;
+    playerZRef.current = 0;
+
     setKills(0);
+    setHealth(100);
+    setAmmo(20);
+    setIsGameOver(false);
     setIsVictory(false);
+
+    monstersRef.current = [
+      { id: 1, x: -40, z: 2.8, speed: 0.008, hp: 2, maxHp: 2, type: "imp" },
+      { id: 2, x: 30, z: 3.5, speed: 0.006, hp: 3, maxHp: 3, type: "caco" },
+      { id: 3, x: 0, z: 4.2, speed: 0.010, hp: 2, maxHp: 2, type: "demon" },
+    ];
   };
 
   useEffect(() => {
-    initDemons();
+    initGame();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      keysPressedRef.current[e.key.toLowerCase()] = true;
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      keysPressedRef.current[e.key.toLowerCase()] = false;
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
   }, []);
 
   useEffect(() => {
@@ -54,192 +81,361 @@ export const DoomCaptcha: React.FC<DoomCaptchaProps> = ({ onSuccess }) => {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const updateGame = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    let lastHitTime = 0;
 
-      // --- RETRO DARK RED ATMOSPHERE ---
-      ctx.fillStyle = "#140707";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const gameLoop = () => {
+      const width = canvas.width;
+      const height = canvas.height;
+      const viewportHeight = 135;
 
-      // Brick texture grid overlay
-      ctx.strokeStyle = "rgba(127, 29, 29, 0.25)";
-      ctx.lineWidth = 1;
-      for (let x = 0; x < canvas.width; x += 20) {
+      ctx.clearRect(0, 0, width, height);
+
+      // --- 1. HANDLE PLAYER MOVEMENT (WASD / ARROWS) ---
+      let isMoving = false;
+      const moveSpeed = 1.2;
+      const keys = keysPressedRef.current;
+
+      if (!isGameOver && !isVictory) {
+        if (keys["a"] || keys["arrowleft"]) {
+          playerXRef.current = Math.max(-50, playerXRef.current - moveSpeed);
+          isMoving = true;
+        }
+        if (keys["d"] || keys["arrowright"]) {
+          playerXRef.current = Math.min(50, playerXRef.current + moveSpeed);
+          isMoving = true;
+        }
+        if (keys["w"] || keys["arrowup"]) {
+          playerZRef.current += 0.02;
+          isMoving = true;
+        }
+        if (keys["s"] || keys["arrowdown"]) {
+          playerZRef.current = Math.max(0, playerZRef.current - 0.02);
+          isMoving = true;
+        }
+
+        if (isMoving) {
+          walkCycleRef.current += 0.15;
+        }
+      }
+
+      const headBobY = Math.sin(walkCycleRef.current) * 3;
+      const px = playerXRef.current;
+      const vanishX = width / 2 - px;
+      const vanishY = viewportHeight * 0.45 + headBobY;
+
+      // --- 2. EXACT DOOM CORRIDOR BACKDROP (FROM YOUR IMAGE) ---
+      // Ceiling (Grey Stone Plates)
+      ctx.fillStyle = "#3a3a38";
+      ctx.fillRect(0, 0, width, vanishY);
+
+      // Floor (Grey Hexagonal Tile Grid)
+      const floorGrad = ctx.createLinearGradient(0, vanishY, 0, viewportHeight);
+      floorGrad.addColorStop(0, "#4a4a46");
+      floorGrad.addColorStop(1, "#1f1f1d");
+      ctx.fillStyle = floorGrad;
+      ctx.fillRect(0, vanishY, width, viewportHeight - vanishY);
+
+      // Floor Perspective Tile Lines
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
+      ctx.lineWidth = 1.5;
+      for (let i = -4; i <= 4; i++) {
         ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
+        ctx.moveTo(vanishX + i * 15, vanishY);
+        ctx.lineTo(vanishX + i * 90, viewportHeight);
         ctx.stroke();
       }
-      for (let y = 0; y < canvas.height; y += 20) {
+
+      // Left Wall (Vertical Wood Plank Panels)
+      ctx.fillStyle = "#695536";
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(vanishX - 65, vanishY - 22);
+      ctx.lineTo(vanishX - 65, vanishY + 38);
+      ctx.lineTo(0, viewportHeight);
+      ctx.fill();
+
+      // Right Wall (Vertical Wood Plank Panels)
+      ctx.fillStyle = "#5c4a2f";
+      ctx.beginPath();
+      ctx.moveTo(width, 0);
+      ctx.lineTo(vanishX + 65, vanishY - 22);
+      ctx.lineTo(vanishX + 65, vanishY + 38);
+      ctx.lineTo(width, viewportHeight);
+      ctx.fill();
+
+      // Wall Plank Vertical Stripes
+      ctx.strokeStyle = "rgba(20, 15, 10, 0.4)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(vanishX - 65, vanishY - 22);
+      ctx.moveTo(width, 0);
+      ctx.lineTo(vanishX + 65, vanishY - 22);
+      ctx.stroke();
+
+      // Back Wall Corridor End
+      ctx.fillStyle = "#473822";
+      ctx.fillRect(vanishX - 65, vanishY - 22, 130, 60);
+
+      // Outer Bevel Frame (Matching your screenshot's green marble border)
+      ctx.fillStyle = "#4a543b";
+      ctx.fillRect(0, 0, 12, viewportHeight);
+      ctx.fillRect(width - 12, 0, 12, viewportHeight);
+      ctx.fillRect(0, 0, width, 8);
+      ctx.fillRect(0, viewportHeight - 6, width, 6);
+
+      // --- 3. MONSTERS PERSPECTIVE DRAW & AI ---
+      const sortedMonsters = [...monstersRef.current].sort((a, b) => b.z - a.z);
+
+      for (const m of sortedMonsters) {
+        if (m.hp > 0) {
+          if (!isGameOver && !isVictory) {
+            m.z -= m.speed;
+
+            if (m.z <= 0.3) {
+              const now = Date.now();
+              if (now - lastHitTime > 800) {
+                lastHitTime = now;
+                healthRef.current = Math.max(0, healthRef.current - 15);
+                setHealth(healthRef.current);
+                try {
+                  if (sfx && typeof sfx.playErrorBuzzer === "function") sfx.playErrorBuzzer();
+                } catch {}
+
+                if (healthRef.current <= 0) {
+                  setIsGameOver(true);
+                }
+              }
+            }
+          }
+
+          const scale = Math.max(0.2, 1 / (m.z || 0.1));
+          const screenX = vanishX + (m.x - px * 0.5) * scale;
+          const screenY = vanishY + 15 * scale;
+          const spriteSize = Math.min(64, 24 * scale);
+
+          ctx.save();
+          ctx.translate(screenX, screenY);
+
+          ctx.font = `${Math.floor(spriteSize)}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          const emoji = m.type === "caco" ? "👾" : m.type === "demon" ? "👹" : "👺";
+          ctx.fillText(emoji, 0, 0);
+
+          ctx.fillStyle = "rgba(0,0,0,0.6)";
+          ctx.fillRect(-spriteSize * 0.4, -spriteSize * 0.6, spriteSize * 0.8, 4);
+          ctx.fillStyle = "#ef4444";
+          ctx.fillRect(-spriteSize * 0.4, -spriteSize * 0.6, (m.hp / m.maxHp) * (spriteSize * 0.8), 4);
+          ctx.restore();
+        }
+      }
+
+      // --- 4. FIRST-PERSON PISTOL / SHOTGUN POV ---
+      const gunX = width / 2;
+      const gunY = viewportHeight + (isMoving ? Math.sin(walkCycleRef.current * 2) * 2 : 0);
+
+      if (muzzleFlashRef.current) {
+        ctx.fillStyle = "#fde047";
         ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(canvas.width, y);
+        ctx.arc(gunX, gunY - 55, 24, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(gunX, gunY - 55, 12, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Classic Centered Weapon Sprite
+      ctx.fillStyle = "#334155";
+      ctx.fillRect(gunX - 10, gunY - 18, 20, 18);
+      ctx.fillStyle = "#1e293b";
+      ctx.fillRect(gunX - 8, gunY - 32, 16, 14);
+      ctx.fillStyle = "#64748b";
+      ctx.fillRect(gunX - 7, gunY - 52, 6, 20);
+      ctx.fillRect(gunX + 1, gunY - 52, 6, 20);
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(gunX - 6, gunY - 54, 4, 3);
+      ctx.fillRect(gunX + 2, gunY - 54, 4, 3);
+
+      // --- 5. EXACT DOOM RETRO HUD STATUS BAR ---
+      const hudY = viewportHeight;
+      const hudHeight = 45;
+
+      ctx.fillStyle = "#4a543b"; // Classic Status Bar Frame
+      ctx.fillRect(0, hudY, width, hudHeight);
+      ctx.strokeStyle = "#1a1f14";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(0, hudY, width, hudHeight);
+
+      const colWidth = width / 5;
+      for (let i = 1; i < 5; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * colWidth, hudY);
+        ctx.lineTo(i * colWidth, height);
         ctx.stroke();
       }
 
-      // --- ANIMATE AND RENDER DEMONS ---
-      demonsRef.current = demonsRef.current.map((demon) => {
-        if (!demon.alive) return demon;
+      ctx.textAlign = "center";
 
-        let { x, y, vx, vy, size } = demon;
-        x += vx;
-        y += vy;
+      // 1. AMMO
+      ctx.fillStyle = ammoRef.current <= 3 ? "#ef4444" : "#dc2626";
+      ctx.font = "bold 16px monospace";
+      ctx.fillText(`${ammoRef.current}`, colWidth * 0.5, hudY + 20);
+      ctx.fillStyle = "#d4d4d8";
+      ctx.font = "900 8px monospace";
+      ctx.fillText("AMMO", colWidth * 0.5, hudY + 36);
 
-        if (x - size < 0 || x + size > canvas.width) vx *= -1;
-        if (y - size < 0 || y + size > canvas.height) vy *= -1;
+      // 2. HEALTH
+      ctx.fillStyle = healthRef.current < 30 ? "#ef4444" : "#dc2626";
+      ctx.font = "bold 16px monospace";
+      ctx.fillText(`${healthRef.current}%`, colWidth * 1.5, hudY + 20);
+      ctx.fillStyle = "#d4d4d8";
+      ctx.font = "900 8px monospace";
+      ctx.fillText("HEALTH", colWidth * 1.5, hudY + 36);
 
-        // Render demon target aura
-        ctx.fillStyle = "rgba(239, 68, 68, 0.15)";
-        ctx.beginPath();
-        ctx.arc(x, y, size + 4, 0, Math.PI * 2);
-        ctx.fill();
+      // 3. DOOM GUY MUGSHOT
+      ctx.font = "20px sans-serif";
+      const faceEmoji = healthRef.current <= 0 ? "💀" : healthRef.current < 40 ? "😫" : "😐";
+      ctx.fillText(faceEmoji, colWidth * 2.5, hudY + 24);
 
-        // Render demon emoji entity
-        ctx.font = `${size * 1.5}px sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(demon.emoji, x, y);
+      // 4. ARMOR
+      ctx.fillStyle = "#dc2626";
+      ctx.font = "bold 16px monospace";
+      ctx.fillText("0%", colWidth * 3.5, hudY + 20);
+      ctx.fillStyle = "#d4d4d8";
+      ctx.font = "900 8px monospace";
+      ctx.fillText("ARMOR", colWidth * 3.5, hudY + 36);
 
-        return { ...demon, x, y, vx, vy };
-      });
+      // 5. WEAPON STATS
+      ctx.fillStyle = "#facc15";
+      ctx.font = "bold 10px monospace";
+      ctx.fillText("SHEL 20", colWidth * 4.5, hudY + 18);
+      ctx.fillText("BULL  0", colWidth * 4.5, hudY + 32);
 
-      // --- MUZZLE FLASH EFFECT ---
-      if (muzzleFlashRef.current && muzzleFlashRef.current.opacity > 0) {
-        const { x, y, opacity } = muzzleFlashRef.current;
-        const flashGrad = ctx.createRadialGradient(x, y, 2, x, y, 40);
-        flashGrad.addColorStop(0, `rgba(254, 240, 138, ${opacity})`);
-        flashGrad.addColorStop(0.5, `rgba(239, 68, 68, ${opacity * 0.6})`);
-        flashGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
-
-        ctx.fillStyle = flashGrad;
-        ctx.beginPath();
-        ctx.arc(x, y, 40, 0, Math.PI * 2);
-        ctx.fill();
-
-        muzzleFlashRef.current.opacity -= 0.15;
+      // CRT Scanlines
+      ctx.fillStyle = "rgba(0, 0, 0, 0.08)";
+      for (let y = 0; y < height; y += 3) {
+        ctx.fillRect(0, y, width, 1);
       }
 
-      // CRT Scanline Overlay
-      ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
-      for (let i = 0; i < canvas.height; i += 4) {
-        ctx.fillRect(0, i, canvas.width, 2);
-      }
-
-      animId = requestAnimationFrame(updateGame);
+      animId = requestAnimationFrame(gameLoop);
     };
 
-    animId = requestAnimationFrame(updateGame);
+    animId = requestAnimationFrame(gameLoop);
     return () => cancelAnimationFrame(animId);
-  }, []);
+  }, [isGameOver, isVictory, onSuccess]);
 
   const handleShoot = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (isVictory) return;
+    if (isGameOver || isVictory || ammoRef.current <= 0) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const shootX = e.clientX - rect.left;
-    const shootY = e.clientY - rect.top;
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
 
-    // Trigger visual muzzle flash
-    muzzleFlashRef.current = { x: shootX, y: shootY, opacity: 0.9 };
+    ammoRef.current = Math.max(0, ammoRef.current - 1);
+    setAmmo(ammoRef.current);
+
+    muzzleFlashRef.current = true;
+    setTimeout(() => {
+      muzzleFlashRef.current = false;
+    }, 90);
 
     try {
-      if (sfx && typeof sfx.playErrorBuzzer === "function") {
-        sfx.playErrorBuzzer();
-      }
-    } catch {
-      // Audio fallback
-    }
+      if (sfx && typeof sfx.playBouncePop === "function") sfx.playBouncePop(1100);
+    } catch {}
 
-    let hitCount = 0;
-    demonsRef.current = demonsRef.current.map((demon) => {
-      if (!demon.alive) return demon;
-      const dist = Math.hypot(demon.x - shootX, demon.y - shootY);
-      if (dist <= demon.size + 12) {
-        try {
-          if (sfx && typeof sfx.playBouncePop === "function") {
-            sfx.playBouncePop(900);
-          }
-        } catch {
-          // Audio fallback
-        }
-        hitCount++;
-        return { ...demon, alive: false };
-      }
-      return demon;
-    });
+    const px = playerXRef.current;
+    const vanishX = canvas.width / 2 - px;
+    const vanishY = 135 * 0.45;
 
-    if (hitCount > 0) {
-      setKills((prev) => {
-        const newKills = prev + hitCount;
-        if (newKills >= 3) {
-          setIsVictory(true);
-          try {
-            if (sfx && typeof sfx.playBouncePop === "function") {
-              sfx.playBouncePop(1000);
+    for (const m of monstersRef.current) {
+      if (m.hp > 0) {
+        const scale = Math.max(0.2, 1 / (m.z || 0.1));
+        const screenX = vanishX + (m.x - px * 0.5) * scale;
+        const screenY = vanishY + 15 * scale;
+        const hitRadius = Math.min(32, 16 * scale);
+
+        if (Math.hypot(clickX - screenX, clickY - screenY) < hitRadius + 14) {
+          m.hp -= 1;
+
+          if (m.hp <= 0) {
+            killsRef.current += 1;
+            setKills(killsRef.current);
+
+            if (killsRef.current < 3) {
+              m.z = 3.5 + Math.random();
+              m.x = (Math.random() - 0.5) * 70;
+              m.hp = 2;
+              m.maxHp = 2;
+            } else {
+              setIsVictory(true);
+              if (onSuccess) onSuccess();
             }
-          } catch {
-            // Audio fallback
           }
-          if (onSuccess) onSuccess();
+          break;
         }
-        return newKills;
-      });
+      }
     }
   };
 
   return (
-    <div className="w-full max-w-sm mx-auto bg-slate-950 border-2 border-red-900 rounded-xl p-4 flex flex-col gap-3 text-white select-none font-mono shadow-2xl">
-      {/* Retro Red DOOM Header */}
-      <div className="bg-red-950 border border-red-800 p-2.5 rounded-lg flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Target className="text-red-500 animate-pulse" size={18} />
-          <span className="text-xs font-black tracking-widest text-red-400">DOOM CAPTCHA</span>
-        </div>
-        <div className="text-xs font-bold text-red-300 bg-black/60 px-2.5 py-1 rounded border border-red-900">
-          KILLS: {kills}/3
-        </div>
+    <div className="w-full max-w-sm mx-auto bg-slate-200 border-2 border-slate-400 rounded-lg overflow-hidden shadow-2xl font-sans select-none">
+      <div className="bg-blue-600 text-white p-3 shadow-md">
+        <p className="text-xs font-medium tracking-wide opacity-90">Play DOOM® and kill</p>
+        <h2 className="text-xl font-extrabold tracking-tight">at least 3 monsters</h2>
       </div>
 
-      {/* FPS Canvas Area */}
-      <div className="relative overflow-hidden rounded-lg border-2 border-red-900">
+      <div className="relative bg-black">
         <canvas
           ref={canvasRef}
           width={320}
           height={180}
           onClick={handleShoot}
-          className="w-full h-44 bg-black cursor-crosshair block"
+          className="w-full h-48 block cursor-crosshair"
         />
+
+        {isGameOver && (
+          <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center text-red-200 font-mono gap-2">
+            <ShieldAlert size={28} className="text-red-400 animate-bounce" />
+            <h3 className="text-base font-black tracking-widest uppercase">YOU DIED!</h3>
+            <button
+              onClick={initGame}
+              className="px-3 py-1 bg-red-700 hover:bg-red-600 text-white font-bold rounded text-xs transition active:scale-95 cursor-pointer"
+            >
+              TRY AGAIN
+            </button>
+          </div>
+        )}
+
+        {isVictory && (
+          <div className="absolute inset-0 bg-emerald-950/90 flex flex-col items-center justify-center text-emerald-200 font-mono gap-2 animate-fade-in">
+            <h3 className="text-lg font-black tracking-widest uppercase">VERIFICATION PASSED!</h3>
+            <p className="text-xs">3/3 MONSTERS ELIMINATED</p>
+          </div>
+        )}
       </div>
 
-      {/* Classic DOOM Status Bar HUD */}
-      <div className="bg-gradient-to-r from-stone-900 via-neutral-900 to-stone-900 p-2 rounded-lg border border-red-900/60 flex items-center justify-between text-[11px] font-bold">
-        <div className="flex items-center gap-1 text-emerald-400">
-          <Shield size={14} />
-          <span>100%</span>
-        </div>
-
-        <div className="text-xl">
-          {isVictory ? "😎" : kills > 0 ? "😏" : "😠"}
-        </div>
-
-        <div className="flex items-center gap-1 text-amber-400">
-          <Zap size={14} />
-          <span>INFINITE</span>
-        </div>
-
+      <div className="p-2.5 bg-slate-100 flex items-center justify-between border-t border-slate-300">
         <button
-          onClick={initDemons}
-          className="p-1.5 bg-red-950 hover:bg-red-900 text-red-300 rounded border border-red-800 transition active:scale-95 cursor-pointer"
+          onClick={initGame}
+          className="p-2 text-slate-600 hover:text-slate-900 bg-slate-200 hover:bg-slate-300 rounded transition active:scale-95 cursor-pointer"
+          title="Reset Captcha"
         >
-          <RefreshCw size={13} />
+          <RefreshCw size={16} />
         </button>
-      </div>
 
-      <p className="text-[10px] text-red-400 text-center font-sans tracking-tight">
-        {isVictory ? "✨ Verification Complete! All threats eliminated." : "Shoot 3 demons to prove humanity!"}
-      </p>
+        <span className="text-xs font-semibold text-slate-500 tracking-wide">
+          WASD/Arrows to move • Click to shoot
+        </span>
+
+        <div className="flex items-center gap-1 bg-slate-200 px-2.5 py-1 rounded text-slate-700 font-mono font-bold text-xs">
+          <Skull size={14} className="text-red-500" />
+          <span>{kills}/3</span>
+        </div>
+      </div>
     </div>
   );
 };
